@@ -1,0 +1,70 @@
+# Use the latest 2.1 version of CircleCI pipeline process engine.
+# See: https://circleci.com/docs/2.0/configuration-reference
+version: 2.1
+
+# Define a job to be invoked later in a workflow.
+# See: https://circleci.com/docs/2.0/configuration-reference/#jobs
+jobs:
+  foxy-build:
+    docker:
+      - image: ros:foxy-ros-base-focal
+
+    steps:
+      - checkout
+      - run:
+          name: set foxy env
+          command: |
+            source /opt/ros/foxy/setup.bash
+            cd ~/
+            mkdir -p ~/colcon_ws/src
+            cd ~/colcon_ws
+            colcon build --symlink-install
+            source ~/colcon_ws/install/local_setup.bash
+            cd ~/colcon_ws/src
+            git clone https://github.com/AutonicsLiDAR/lsc_ros2_driver.git
+            sudo apt update
+            sudo apt install ros-foxy-diagnostic-updater
+            cd ~/colcon_ws
+            colcon build --packages-select lsc_ros2_driver --event-handlers console_direct+
+
+      - run:
+          name: ready to execute launch
+          command: |
+            cd ~/colcon_ws
+            source /opt/ros/foxy/setup.bash
+            source ~/colcon_ws/install/local_setup.bash
+  humble-build:
+    docker:
+      - image: ros:humble-ros-base-jammy
+
+    steps:
+      - checkout
+      - run:
+          name: set humble env
+          command: |
+            source /opt/ros/humble/setup.bash
+            cd ~/
+            mkdir -p ~/colcon_ws/src
+            cd ~/colcon_ws
+            colcon build --symlink-install
+            source ~/colcon_ws/install/local_setup.bash
+            cd ~/colcon_ws/src
+            git clone https://github.com/AutonicsLiDAR/lsc_ros2_driver.git
+            sudo apt update
+            sudo apt install ros-humble-diagnostic-updater
+            cd ~/colcon_ws
+            colcon build --packages-select lsc_ros2_driver --event-handlers console_direct+
+
+      - run:
+          name: ready to execute launch
+          command: |
+            cd ~/colcon_ws
+            source /opt/ros/humble/setup.bash
+            source ~/colcon_ws/install/local_setup.bash
+# Invoke jobs via workflows
+# See: https://circleci.com/docs/2.0/configuration-reference/#workflows
+workflows:
+  build-test:
+    jobs:
+      - foxy-build
+      - humble-build

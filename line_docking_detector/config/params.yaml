@@ -1,0 +1,52 @@
+# ============================================================
+# line_docking_detector 파라미터 설정
+# ============================================================
+
+line_detector_node:
+  ros__parameters:
+    # ── 토픽 / 프레임 ──
+    scan_topic: "/scan"          # LaserScan 토픽
+    laser_frame: "laser"         # LiDAR TF 프레임 이름
+    target_frame: "docking_target"  # 발행할 TF 프레임 이름
+
+    # ── V-shape 기대 각도 ──
+    expected_angle_deg: 130.0    # 두 라인 사이 기대 각도 (도)
+    angle_tolerance_deg: 5.0    # 허용 오차 (도)
+
+    # ── 스캔 필터 ──
+    min_range: 0.1               # 최소 거리 (m)
+    max_range: 1.3               # 최대 거리 (m)
+    scan_angle_min_deg: -50.0    # 스캔 시작 각도 (도)
+    scan_angle_max_deg: 50.0     # 스캔 끝 각도 (도)
+
+    # ── RANSAC 설정 ──
+    ransac_iterations: 150       # RANSAC 반복 횟수
+    ransac_threshold: 0.03       # 인라이어 거리 임계값 (m)
+    min_line_points: 8           # 라인당 최소 포인트 수
+    max_candidate_lines: 5       # 검출할 최대 후보 라인 수
+
+    # ── 포인트 연속성 ──
+    gap_threshold: 0.03       # 라인 포인트 간 최대 간격 (m, 클수록 긴 라인 허용)
+
+    # ── Outlier 제거 (인접점 기반) ──
+    outlier_dist: 0.05           # 인접점 대비 이 거리 이상이면 이상치 (m)
+
+    # ── 라인 후처리 ──
+    min_line_length: 0.04        # 이보다 짧은 라인은 무시 (m)
+    merge_angle_thresh_deg: 5.0  # collinear 병합 방향 임계값 (도)
+    merge_dist_thresh: 0.05      # collinear 병합 직교거리 임계값 (m)
+
+    # ── V-pair 라인 간 거리 ──
+    max_line_pair_dist: 0.3      # 두 라인 끝점 간 최소거리가 이 값 이상이면 거부 (m)
+
+    # ── 스무딩 ──
+    smoothing_alpha: 0.3         # EMA 알파 (0~1, 클수록 반응 빠름)
+    history_size: 5              # 이력 버퍼 크기 (중앙값 필터용)
+
+    # ── Jump Rejection (급격한 위치 변화 거부) ──
+    max_jump_distance: 0.15      # 허용 최대 위치 점프 (m)
+    max_jump_yaw_deg: 20.0       # 허용 최대 각도 점프 (도)
+
+    # ── Confidence Gate (초기 안정화) ──
+    confidence_count: 3          # 연속 N회 유사 검출 후 발행 시작
+    confidence_radius: 0.08      # 유사 판정 반경 (m)

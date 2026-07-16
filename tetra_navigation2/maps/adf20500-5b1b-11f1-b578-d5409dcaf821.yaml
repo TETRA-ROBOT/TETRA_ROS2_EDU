@@ -1,0 +1,7 @@
+image: adf20500-5b1b-11f1-b578-d5409dcaf821.pgm
+mode: trinary
+resolution: 0.050
+origin: [-18.268, -19.006, 0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
