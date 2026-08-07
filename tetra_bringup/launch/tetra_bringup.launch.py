@@ -47,16 +47,6 @@ def generate_launch_description():
         ]
     )
     
-    # IMU Sensor
-    iahrs_driver_node = Node(
-        package='iahrs_driver', 
-        executable='iahrs_driver',
-        output='screen',
-        parameters=[
-            {"m_bSingle_TF_option": False} # default: True
-        ]
-    )
-    
     # Joystick
     joy_node = Node(
         package='joy', 
@@ -123,9 +113,9 @@ def generate_launch_description():
         name='r270_node',
         output='screen',
         arguments=[
-            '-i', '192.168.0.10', '5000',
+            '-i', '192.168.123.100', '5000',
             '-m', '224.0.0.5',
-            '-fix', 'laser',
+            '-fix', 'lidar_link',
             '-topic', 'points2'
         ]
     )
@@ -137,14 +127,15 @@ def generate_launch_description():
         output='screen',
         remappings=[
             ('cloud_in', '/points2'),
+            ('scan', '/scan')
         ],
         parameters=[{
-            'target_frame': 'camera1_link',
+            'target_frame': 'lidar_link',
             'transform_tolerance': 0.01,
             'min_height': 0.0,
             'max_height': 1.0,
-            'angle_min': -1.8415926,   # -135
-            'angle_max':  2.8415926,   # 135
+            'angle_min': -3.14159,
+            'angle_max': 3.14159,
             'angle_increment': 0.0087,
             'scan_time': 0.1,
             'range_min': 0.1,
@@ -154,81 +145,43 @@ def generate_launch_description():
         }]
     )
     
+    # web_video_server_node 
+    web_video_server_node = Node(
+        package='web_video_server', 
+        executable='web_video_server',
+        output='screen',
+        parameters=[
+            {"quality": 1}
+        ]
+    )
+    
     # create and return launch description object
     return LaunchDescription(
         [
             tetra_node,
             ekf_localization_node,
             tetra_interface_node, 
-            # iahrs_driver_node,
             joy_node,
             use_sim_time,
             rsp_node,
             tetra_service_node,
             rosbridge_server,
             rosapi_node,
-            # kanavi_lidar_node,
-            # pointcloud_to_scan_node,
-            
-		# USB Camera
-		# IncludeLaunchDescription(
-		# PythonLaunchDescriptionSource(
-		# 	[get_package_share_directory('usb_cam'), '/launch/camera.launch.py']),
-		# ),
+            kanavi_lidar_node,
+            pointcloud_to_scan_node,
+            web_video_server_node,
 
-
-		# IncludeLaunchDescription(
-		# PythonLaunchDescriptionSource(
-		# 	[get_package_share_directory('line_tf_publisher'), '/launch/line_tf_publisher.launch.py']),
-		# ),
-        
         # apriltag_ros 
 		IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			[get_package_share_directory('apriltag_ros'), '/launch/apriltag_detection.launch.py']),
 		),
-			
-		# sick_tim_571
-		#IncludeLaunchDescription(
-		#PythonLaunchDescriptionSource(
-		#	[get_package_share_directory('sick_scan_xd'), '/launch/sick_tim_5xx.launch.py']),
-		#),
 
-        # autonics lidar
-		IncludeLaunchDescription(
-		PythonLaunchDescriptionSource(
-			[get_package_share_directory('lsc_ros2_driver'), '/launch/lsc_ros2_driver_launch.py']),
-		),
-		
-		# cygbot 2D lidar
-		#IncludeLaunchDescription(
-		#PythonLaunchDescriptionSource(
-		#	[get_package_share_directory('cyglidar_d2_ros2'), '/launch/cyglidar.launch.py']),
-		#),
-		
 		# realsense D455
 		IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			[get_package_share_directory('realsense2_camera'), '/launch/rs_launch.py']),
 		),
 
-		# Livox MID-360 (3D LiDAR)
-		#IncludeLaunchDescription(
-		#PythonLaunchDescriptionSource(
-		#	[get_package_share_directory('livox_ros_driver2'), '/launch_ROS2/MID360_launch.py']),
-		#),
-
-        # laser filter
-		# IncludeLaunchDescription(
-		# PythonLaunchDescriptionSource(
-		# 	[get_package_share_directory('laser_filters'), '/examples/angular_filter_example.launch.py']),
-		# ),
-
-        # laser line extraction
-		# IncludeLaunchDescription(
-		# PythonLaunchDescriptionSource(
-		# 	[get_package_share_directory('laser_line_extraction_ros2'), '/launch/example.launch.py']),
-		# ),
-        
         ]
     )
