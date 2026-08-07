@@ -35,8 +35,8 @@ extern "C"
 #include <atomic>
 using namespace std;
 
-#define WHEEL_RADIUS 0.0735 //0.1018 //m
-#define WHEEL_DISTANCE 0.3884 //0.438 //m
+#define WHEEL_RADIUS 0.0750 //m
+#define WHEEL_DISTANCE 0.3950 //m
 #define TREAD_WIDTH 0.04 //m
 
 using std::placeholders::_1;
@@ -481,7 +481,8 @@ int main(int argc, char * argv[])
 	}
 
 	rclcpp::WallRate loop_rate(60); //default: 30HZ
-	sprintf(port, "/dev/ttyS0");
+	// sprintf(port, "/dev/ttyS0");
+	sprintf(port, "/dev/ttyS2");
 	//sprintf(port, "/dev/TETRA");
 	//RS232 Connect
 	if(dssp_rs232_drv_module_create(port, 200) == 0)
