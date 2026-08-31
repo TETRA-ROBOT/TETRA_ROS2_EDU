@@ -41,7 +41,6 @@
 #include "interfaces/srv/toggle_on.hpp"
 #include "interfaces/srv/docking_control.hpp" //docking
 #include "interfaces/srv/docking_stop.hpp" //docking_stop
-#include "interfaces/srv/imu_reset.hpp" //imu reset
 #include "interfaces/srv/save_map.hpp" //Map save service
 #include "interfaces/srv/delete_map.hpp" //Map delete service
 #include "interfaces/srv/run_mapping.hpp" //cartographer run service
@@ -301,8 +300,8 @@ DOCKING_POSE _pDocking_pose;
 std::atomic<bool> stop_requested(false);
 void signal_handler(int signal) 
 {
-    stop_requested = true;
-    printf("Signal received: %d. Preparing to shutdown...\n", signal);
+	stop_requested = true;
+	printf("Signal received: %d. Preparing to shutdown...\n", signal);
 }
 
 
@@ -316,13 +315,12 @@ public:
         tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
-
 		//Action list///////////////////////////////////////////////////////////////////////////////////////
 		nav_to_pose_action_client = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
 
 		//publish list/////////////////////////////////////////////////////////////////////////////////////
 		//cmd_vel_publisher = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
-		//cmd_vel_publisher = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel_manual", 10);
+		// cmd_vel_publisher = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel_manual", 10);
 		cmd_vel_publisher = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel_manual", 10);
 		pose_reset_publisher = this->create_publisher<std_msgs::msg::Int32>("pose_reset", 10);
 		initial_pose_publisher = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("initialpose", 10);
@@ -337,12 +335,8 @@ public:
 
 		// lintag_subscriber = this->create_subscription<geometry_msgs::msg::PoseStamped>(
 		//  	"docking_target_pose", 10, std::bind(&TETRA_SERVICE::LinetagCallback, this, _1));
-
-		sick_scan_subscriber = this->create_subscription<sensor_msgs::msg::LaserScan>(
-		  	"scan", rclcpp::SensorDataQoS(), std::bind(&TETRA_SERVICE::SickCallback, this, _1));
-		
-		cygbot_scan_subscriber = this->create_subscription<sensor_msgs::msg::LaserScan>(
-			"scan2", rclcpp::SensorDataQoS(), std::bind(&TETRA_SERVICE::CygbotCallback, this, _1));
+		kanavi_pc_subscriber = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+			"points2", rclcpp::SensorDataQoS(), std::bind(&TETRA_SERVICE::KanaviCallback, this, _1));
 
 		bumper_subscriber = this->create_subscription<std_msgs::msg::Int32>(
 			"bumper_data", 1, std::bind(&TETRA_SERVICE::BumperCallback, this, _1));
@@ -355,12 +349,6 @@ public:
 		
 		docking_status_subscriber = this->create_subscription<std_msgs::msg::Int32>(
 			"docking_status", 1, std::bind(&TETRA_SERVICE::DockingStatusCallback, this, _1));
-		
-		conveyor_sensor_subscriber = this->create_subscription<std_msgs::msg::Int32>(
-			"conveyor_sensor", 1, std::bind(&TETRA_SERVICE::ConveyorSensorCallback, this, _1));
-
-		conveyor_movement_subscriber = this->create_subscription<std_msgs::msg::Int32>(
-			"conveyor_movement", 1, std::bind(&TETRA_SERVICE::ConveyorMovementCallback, this, _1));
 
 		joy_subscriber = this->create_subscription<sensor_msgs::msg::Joy>(
 			"joy", rclcpp::SensorDataQoS(), std::bind(&TETRA_SERVICE::joyCallback, this, _1));
@@ -432,7 +420,6 @@ public:
 		led_control_client = this->create_client<interfaces::srv::LedControl>("led_cmd");
 		led_toggle_control_client = this->create_client<interfaces::srv::LedToggleControl>("led_toggle_cmd");
 		toggle_on_client = this->create_client<interfaces::srv::ToggleOn>("turn_on_cmd");
-		imu_reset_client = this->create_client<interfaces::srv::ImuReset>("all_data_reset");
 		//request_nomotion_update Service Client
   		request_nomotion_update_client = this->create_client<std_srvs::srv::Empty>("request_nomotion_update");
 		// Clear Costmap Service Client
@@ -489,8 +476,7 @@ public:
 	//Subscription ////////////////////////////////////////////////////////////////////////////////////
 	rclcpp::Subscription<apriltag_msgs::msg::AprilTagDetectionArray>::SharedPtr apriltag_subscriber;
 	rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr lintag_subscriber;
-	rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sick_scan_subscriber;
-	rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr cygbot_scan_subscriber;
+	rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr kanavi_pc_subscriber;
 	rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr bumper_subscriber;
 	rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr emg_subscriber;
 	rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr tetra_battery_subscriber;
@@ -590,7 +576,7 @@ public:
 
 	void LinetagCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) 
 	{
-		if (!tf2_buffer_->canTransform("camera", "docking_target", tf2::TimePointZero)) {
+		if (!tf2_buffer_->canTransform("camera_color_optical_frame", "docking_target", tf2::TimePointZero)) {
 			_pAR_tag_pose.m_iApril_tag_id = -1;
 			_pAR_tag_pose.m_transform_pose_x = 0.0;
 			_pAR_tag_pose.m_transform_pose_y = 0.0;
@@ -603,7 +589,7 @@ public:
 		//TF
 		rclcpp::Time now = this->get_clock()->now();
 		geometry_msgs::msg::TransformStamped transformStamped;
-		transformStamped = tf2_buffer_->lookupTransform("camera", "docking_target", tf2::TimePointZero);
+		transformStamped = tf2_buffer_->lookupTransform("camera_color_optical_frame", "docking_target", tf2::TimePointZero);
 
 		//position
 		_pAR_tag_pose.m_dApril_tag_pose_x = transformStamped.transform.translation.x;
@@ -674,13 +660,13 @@ public:
 
 			}
 			string strTF_frame_name = _pAR_tag_pose.m_strFamily + to_string(_pAR_tag_pose.m_iApril_tag_id);
-			if (!tf2_buffer_->canTransform("camera", strTF_frame_name, tf2::TimePointZero)) {
+			if (!tf2_buffer_->canTransform("camera_color_optical_frame", strTF_frame_name, tf2::TimePointZero)) {
 				return;
 			}
 			//TF
 			rclcpp::Time now = this->get_clock()->now();
             geometry_msgs::msg::TransformStamped transformStamped;
-			transformStamped = tf2_buffer_->lookupTransform("camera", strTF_frame_name, tf2::TimePointZero);
+			transformStamped = tf2_buffer_->lookupTransform("camera_color_optical_frame", strTF_frame_name, tf2::TimePointZero);
 
 			//position
 			_pAR_tag_pose.m_dApril_tag_pose_x = transformStamped.transform.translation.x;
@@ -718,7 +704,7 @@ public:
 			q_new.normalize();  // 정규화 권장
 
 			dock_pose.header.stamp = msg->header.stamp;
-			dock_pose.header.frame_id = "camera";
+			dock_pose.header.frame_id = "camera_color_optical_frame";
 			dock_pose.pose.position.x = _pAR_tag_pose.m_dApril_tag_pose_x;
 			dock_pose.pose.position.y = _pAR_tag_pose.m_dApril_tag_pose_y;
 			dock_pose.pose.position.z = _pAR_tag_pose.m_dApril_tag_pose_z-0.2;
@@ -766,75 +752,23 @@ public:
 		}
 	}
 
-	//Sick Tim571 Lidar Callback
-	void SickCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
-{
-    if (!msg) {
-        RCLCPP_ERROR(this->get_logger(), "Received null LaserScan message");
-        return;
-    }
-
-    int size = msg->ranges.size();
-    if (size == 0) {
-        RCLCPP_WARN(this->get_logger(), "LaserScan ranges is empty");
-        return;
-    }
-
-    int C_minIndex = 268;
-    int C_maxIndex = 536;
-
-    // 범위 체크: ranges 크기보다 크면 잘라내기
-    if (C_maxIndex > size) {
-        C_maxIndex = size;
-    }
-
-    int C_closestIndex = -1;
-    double C_minVal = 0.3;
-
-    for (int i = C_minIndex; i < C_maxIndex; i++) {
-        if ((msg->ranges[i] <= C_minVal) &&
-            (msg->ranges[i] >= msg->range_min) &&
-            (msg->ranges[i] <= msg->range_max))
-        {
-            C_minVal = msg->ranges[i];
-            C_closestIndex = i;
-        }
-    }
-
-    if (C_closestIndex != -1 && msg->ranges[C_closestIndex] > 0.1) {
-        _pFlag_Value.m_bFlag_Obstacle_Center = true;
-    } else {
-        _pFlag_Value.m_bFlag_Obstacle_Center = false;
-    }
-}
-
-
-	//Cygbot Lidar Callback
-	void CygbotCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
+	//Kanavi R270 Lidar Callback
+	void KanaviCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 	{
-		int size = msg->ranges.size();
-		//printf("cygbot_size: %d \n",size);
-		int cygbot_minIndex = 1;
-		int cygbot_maxIndex = 160;
-		int cygbot_closestIndex = -1;
-		double cygbot_minVal = 0.3;
+		if (!msg) {
+			RCLCPP_ERROR(this->get_logger(), "Received null PointCloud2 message");
+			return;
+		}
 
-		for (int i = cygbot_minIndex; i < cygbot_maxIndex; i++)
-		{
-			if ((msg->ranges[i] <= cygbot_minVal) && (msg->ranges[i] >= msg->range_min) && (msg->ranges[i] <= msg->range_max))
-			{
-				cygbot_minVal = msg->ranges[i];
-				cygbot_closestIndex = i;
-			}
+		if (msg->data.empty()) {
+			RCLCPP_WARN(this->get_logger(), "PointCloud2 data is empty");
+			return;
 		}
-		//printf("cygbot_closestIndex: %d || check: %f \n" , cygbot_closestIndex, msg->ranges[cygbot_closestIndex]);
-		if(cygbot_closestIndex > 0)
-		{
-			_pFlag_Value.m_bFlag_Obstacle_cygbot = true;
-			//printf("Rear Obstacle Check !!!!! \n");
-		}
-		else
-			_pFlag_Value.m_bFlag_Obstacle_cygbot = false;
+
+		// Define Region of Interest (ROI) for Center Obstacle Detection
+		// Note: Adjust these bounds based on actual robot frame setup
+		const float x_min = 0.10f;		// Minimum forward distance (m)
+		const float x_max = 0.30f;		// Maximum forward distance (m) (matching previous C_minVal)
 
 	}
 
@@ -946,12 +880,6 @@ public:
 	{
 		//RCLCPP_INFO(this->get_logger(), "response ToggleOn_callback");
 	}
-	
-	void ImuReset_callback(rclcpp::Client<interfaces::srv::ImuReset>::SharedFuture future)
-	{
-		//RCLCPP_INFO(this->get_logger(), "response ImuReset_callback");
-	} 
-
 
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1170,8 +1098,6 @@ public:
 		if(_pRobot.HOME_id == _pAR_tag_pose.m_iApril_tag_id) // Same as Home ID... Loop 
 		{
 			_pFlag_Value.m_bFlag_nomotion = false;
-			//IMU reset//
-			ImuReset_Call();
 
 			//tetra odometry Reset//
 			pose_reset_data.data = 1;
@@ -2371,14 +2297,6 @@ public:
             request, std::bind(&TETRA_SERVICE::ToggleOn_callback, this, std::placeholders::_1));
     }
 
-	void ImuReset_Call() 
-    {
-        auto request = std::make_shared<interfaces::srv::ImuReset::Request>();
-
-        auto result_future = imu_reset_client->async_send_request(
-            request, std::bind(&TETRA_SERVICE::ImuReset_callback, this, std::placeholders::_1));
-    }
-
 	bool Clear_Costmap() 
 	{
 		// Check if the service is available
@@ -2409,7 +2327,6 @@ private:
 	rclcpp::Client<interfaces::srv::LedControl>::SharedPtr led_control_client;
 	rclcpp::Client<interfaces::srv::LedToggleControl>::SharedPtr led_toggle_control_client;
 	rclcpp::Client<interfaces::srv::ToggleOn>::SharedPtr toggle_on_client;
-	rclcpp::Client<interfaces::srv::ImuReset>::SharedPtr imu_reset_client;
 	rclcpp::Client<std_srvs::srv::Empty>::SharedPtr request_nomotion_update_client;
 	rclcpp::Client<nav2_msgs::srv::ClearEntireCostmap>::SharedPtr clear_entire_local_costmap_client;
 	rclcpp::Client<nav2_msgs::srv::ClearEntireCostmap>::SharedPtr clear_entire_global_costmap_client;
