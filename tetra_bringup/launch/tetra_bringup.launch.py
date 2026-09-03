@@ -89,6 +89,14 @@ def generate_launch_description():
         ]
     )
 
+    # led_control_node
+    led_control_node = Node(
+        package='tetra_service',
+        executable='led_control_node',
+        respawn= True,
+        output='screen'
+    )
+
     # rosbridge_server 
     rosbridge_server = Node(
         package='rosbridge_server', 
@@ -165,6 +173,7 @@ def generate_launch_description():
             use_sim_time,
             rsp_node,
             tetra_service_node,
+            led_control_node,
             rosbridge_server,
             rosapi_node,
             kanavi_lidar_node,

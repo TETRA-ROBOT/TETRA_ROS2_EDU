@@ -51,16 +51,16 @@ include_directories(
 		${tf2_INCLUDE_DIRS}
 		${tf2_ros_INCLUDE_DIRS}
 		${nav2_msgs_INCLUDE_DIRS}
-    		${rclcpp_action_INCLUDE_DIRS}
-    		${nav2_costmap_2d_INCLUDE_DIRS}
+    ${rclcpp_action_INCLUDE_DIRS}
+    ${nav2_costmap_2d_INCLUDE_DIRS}
 		${nav_msgs_INCLUDE_DIRS}
 		${geometry_msgs_INCLUDE_DIRS}
-    		${robot_localization_INCLUDE_DIRS}
-    		${pcl_ros_INCLUDE_DIRS}
-    		${PCL_INCLUDE_DIRS}
-    		${apriltag_ros_INCLUDE_DIRS}
-    		${apriltag_msgs_INCLUDE_DIRS}
-    )
+    ${robot_localization_INCLUDE_DIRS}
+    ${pcl_ros_INCLUDE_DIRS}
+    ${PCL_INCLUDE_DIRS}
+    ${apriltag_ros_INCLUDE_DIRS}
+    ${apriltag_msgs_INCLUDE_DIRS}
+  )
 
 add_executable(tetra_service src/tetra_service.cpp )
 
@@ -110,8 +110,17 @@ target_link_libraries(${PROJECT_NAME}
                       ${apriltag_msgs_LIBRARIES}
                       )
 
+add_executable(led_control_node src/led_control_node.cpp)
+
+ament_target_dependencies(led_control_node
+  rclcpp
+  std_msgs
+  interfaces
+)
+
 install(TARGETS 
 	${PROJECT_NAME} 
+  led_control_node
 	DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY

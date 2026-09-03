@@ -36,9 +36,6 @@
 #include "tf2/exceptions.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 //Custom Service//
-#include "interfaces/srv/led_control.hpp"
-#include "interfaces/srv/led_toggle_control.hpp"
-#include "interfaces/srv/toggle_on.hpp"
 #include "interfaces/srv/docking_control.hpp" //docking
 #include "interfaces/srv/docking_stop.hpp" //docking_stop
 #include "interfaces/srv/save_map.hpp" //Map save service
@@ -327,6 +324,7 @@ public:
 		movebase_publisher = this->create_publisher<std_msgs::msg::Int32>("movebase", 10);
 		footprint_publisher = this->create_publisher<geometry_msgs::msg::Pose>("footprint", 10);
 		dock_pose_publisher = this->create_publisher<geometry_msgs::msg::PoseStamped>("detected_dock_pose", 10);
+		robot_status_publisher = this->create_publisher<std_msgs::msg::Int32>("/robot_status", 10);
 		//bumper_pointcloud_publisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("bumper_pointcloud", 10);
 
 		//subscribe list////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -416,10 +414,6 @@ public:
 		std::bind(&TETRA_SERVICE::Set_Maxspeed_Command, this, std::placeholders::_1, std::placeholders::_2));
 
 
-		//Client list///////////////////////////////////////////////////////////////////////////////////////
-		led_control_client = this->create_client<interfaces::srv::LedControl>("led_cmd");
-		led_toggle_control_client = this->create_client<interfaces::srv::LedToggleControl>("led_toggle_cmd");
-		toggle_on_client = this->create_client<interfaces::srv::ToggleOn>("turn_on_cmd");
 		//request_nomotion_update Service Client
   		request_nomotion_update_client = this->create_client<std_srvs::srv::Empty>("request_nomotion_update");
 		// Clear Costmap Service Client
@@ -473,6 +467,7 @@ public:
 	rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr movebase_publisher;
 	rclcpp::Publisher<geometry_msgs::msg::Pose>::SharedPtr footprint_publisher;
 	rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr dock_pose_publisher;
+	rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr robot_status_publisher;
 	//Subscription ////////////////////////////////////////////////////////////////////////////////////
 	rclcpp::Subscription<apriltag_msgs::msg::AprilTagDetectionArray>::SharedPtr apriltag_subscriber;
 	rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr lintag_subscriber;
@@ -792,8 +787,8 @@ public:
 
 			if(!_pFlag_Value.m_bFlag_Disable_bumper)
 			{
-				LedToggleControl_Call(1, 10,100,10,1);
-    				ToggleOn_Call(18);
+				// LedToggleControl_Call(1, 10,100,10,1);
+    			// 	ToggleOn_Call(18);
 				//printf("[Bumper] Push Bumper!! _ RED LED On \n");
 		
 				// if(_pFlag_Value.m_bflagGo)
@@ -814,8 +809,8 @@ public:
 
 			if(_pFlag_Value.m_bumperhit_flag)
 			{
-				LedToggleControl_Call(1,3,100,3,1);
-				ToggleOn_Call(63); //White led
+				// LedToggleControl_Call(1,3,100,3,1);
+				// ToggleOn_Call(63); //White led
 				_pFlag_Value.m_bumperhit_flag = false;
 			}
 
@@ -828,8 +823,11 @@ public:
 		_pRobot.m_iCallback_EMG = msg->data;
 		if(_pRobot.m_iCallback_EMG != 0)
 		{
-			LedToggleControl_Call(1, 10,100,10,1);
-			ToggleOn_Call(18);
+			std_msgs::msg::Int32 status_msg;
+			status_msg.data = 99; // 99: EMG 비상 상태
+			robot_status_publisher->publish(status_msg);
+			// LedToggleControl_Call(1, 10,100,10,1);
+			// ToggleOn_Call(18);
 			//printf("[EMG] Push EMG button!! _ RED LED On \n");
 			_pFlag_Value.m_emgpush_flag = false;
 		}
@@ -837,8 +835,8 @@ public:
 		{
 			if(!_pFlag_Value.m_emgpush_flag)
 			{
-				LedToggleControl_Call(1, 3,100,3,1);
-				ToggleOn_Call(63);
+				// LedToggleControl_Call(1, 3,100,3,1);
+				// ToggleOn_Call(63);
 				_pFlag_Value.m_emgpush_flag = true;
 			}
 		}
@@ -863,25 +861,6 @@ public:
 	{
 		_pRobot.m_iConveyor_movement = msg->data;
 	}
-
-
-	//Client Callback Function ///////////////////////////////////////////////////////////////
-	void LedControl_callback(rclcpp::Client<interfaces::srv::LedControl>::SharedFuture future)
-	{
-		//RCLCPP_INFO(this->get_logger(), "response LedControl_callback");
-
-	}
-	void LedToggleControl_callback(rclcpp::Client<interfaces::srv::LedToggleControl>::SharedFuture future)
-	{
-		//RCLCPP_INFO(this->get_logger(), "response LedToggleControl_callback");
-
-	}
-	void ToggleOn_callback(rclcpp::Client<interfaces::srv::ToggleOn>::SharedFuture future)
-	{
-		//RCLCPP_INFO(this->get_logger(), "response ToggleOn_callback");
-	}
-
-	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	bool Depart_Station2Move()
 	{
@@ -1110,8 +1089,8 @@ public:
 		//Marker_Reset_Robot_Pose();
 
 		_pFlag_Value.m_bFlag_Initialpose = true;
-		LedToggleControl_Call(1,3,100,3,1);
-    	ToggleOn_Call(63);
+		// LedToggleControl_Call(1,3,100,3,1);
+    	// ToggleOn_Call(63);
 	}
 
 	void TF_CALC_Timer()
@@ -1588,8 +1567,8 @@ public:
 				// Station Docking Loop//
 				case 1:
 					printf("Docking Loop 1 Start... \n");
-					LedToggleControl_Call(1,3,100,3,100);
-    					ToggleOn_Call(63);
+					// LedToggleControl_Call(1,3,100,3,100);
+    				// 	ToggleOn_Call(63);
 					m_iDocking_CommandMode = 2;
 					break;
 				case 2:
@@ -1634,19 +1613,19 @@ public:
 					break;
 				case 8:
 					printf("Docking End Loop 8... \n");
-					LedToggleControl_Call(1,3,100,3,100);
-    				ToggleOn_Call(9);
+					// LedToggleControl_Call(1,3,100,3,100);
+    				// ToggleOn_Call(9);
 					printf("TETRA POSE Reset! \n");
 					////PoseReset_call
 					//Reset_Robot_Pose();
-					LedToggleControl_Call(1, 5,100,5,1);
-					ToggleOn_Call(63);
+					// LedToggleControl_Call(1, 5,100,5,1);
+					// ToggleOn_Call(63);
 					m_iDocking_CommandMode = 0;
 					break;
 				case 9:
 					//printf("Docking FAIL ! \n");
-					LedToggleControl_Call(1, 10,100,10,1);
-    				ToggleOn_Call(18);
+					// LedToggleControl_Call(1, 10,100,10,1);
+    				// ToggleOn_Call(18);
 					// m_iDocking_CommandMode = 119;
 					m_iDocking_CommandMode = 0;
 					break;
@@ -1931,8 +1910,8 @@ public:
 		//Clear Costmap Call
 		Clear_Costmap();
 		//LED Toggle Call
-		LedToggleControl_Call(1,3,100,3,1);
-		ToggleOn_Call(63); //White led
+		// LedToggleControl_Call(1,3,100,3,1);
+		// ToggleOn_Call(63); //White led
 		//Location file load..
 		bResult = OpenLocationFile(request->location);
 		response->pose_x  = _pGoal_pose.goal_positionX;
@@ -1994,8 +1973,8 @@ public:
 		Clear_Costmap();
 		
 		//LED Toggle Call
-		LedToggleControl_Call(1,3,100,3,1);
-		ToggleOn_Call(63); //White led
+		// LedToggleControl_Call(1,3,100,3,1);
+		// ToggleOn_Call(63); //White led
 		
 		
 		_pGoal_pose.goal_positionX = request->pose_x;
@@ -2200,8 +2179,8 @@ public:
 				movebase.data = 3;
 				movebase_publisher->publish(movebase);
 				//LED Toggle Call
-				LedToggleControl_Call(1,3,100,3,1);
-				ToggleOn_Call(63); //White led
+				// LedToggleControl_Call(1,3,100,3,1);
+				// ToggleOn_Call(63); //White led
 				sleep(1);
 
 				ex_iRetry_count = 0; //retry count reset
@@ -2219,8 +2198,8 @@ public:
 				movebase.data = 4;
 				movebase_publisher->publish(movebase);
 				//LED Toggle Call
-				LedToggleControl_Call(1,10,100,10,1);
-				ToggleOn_Call(18); //Red led
+				// LedToggleControl_Call(1,10,100,10,1);
+				// ToggleOn_Call(18); //Red led
 				
 				//retry set goal loop//========================================================================================
 				if(ex_iRetry_count < ex_iRetry_Max_count)
@@ -2247,8 +2226,8 @@ public:
 				movebase.data = 1;
 				movebase_publisher->publish(movebase);
 				//LED Toggle Call
-				LedToggleControl_Call(1,10,100,10,1);
-				ToggleOn_Call(18); //Red led
+				// LedToggleControl_Call(1,10,100,10,1);
+				// ToggleOn_Call(18); //Red led
 
 				ex_iRetry_count = 0;
 				break;
@@ -2264,39 +2243,6 @@ public:
 	
 	
 	//Client Function ///////////////////////////////////////////////////////////////
-	void LedControl_Call(int id, int led_brightness) 
-    {
-        auto request = std::make_shared<interfaces::srv::LedControl::Request>();
-        request->id = id;
-        request->led_brightness = led_brightness;
-
-        auto result_future = led_control_client->async_send_request(
-            request, std::bind(&TETRA_SERVICE::LedControl_callback, this, std::placeholders::_1));
-    }
-
-	void LedToggleControl_Call(int de_index, int light_accel, int led_high_brightness, int light_decel, int led_low_brightness) 
-    {
-        auto request = std::make_shared<interfaces::srv::LedToggleControl::Request>();
-        request->de_index = de_index;
-        request->light_accel = light_accel;
-		request->led_high_brightness = led_high_brightness;
-		request->light_decel = light_decel;
-		request->led_low_brightness = led_low_brightness;
-
-
-        auto result_future = led_toggle_control_client->async_send_request(
-            request, std::bind(&TETRA_SERVICE::LedToggleControl_callback, this, std::placeholders::_1));
-    }
-
-	void ToggleOn_Call(int id) 
-    {
-        auto request = std::make_shared<interfaces::srv::ToggleOn::Request>();
-        request->id = id;
-
-        auto result_future = toggle_on_client->async_send_request(
-            request, std::bind(&TETRA_SERVICE::ToggleOn_callback, this, std::placeholders::_1));
-    }
-
 	bool Clear_Costmap() 
 	{
 		// Check if the service is available
@@ -2324,9 +2270,6 @@ public:
  
 private:
 	////Client/////////////////////////////////////////////////////////////////////////////////
-	rclcpp::Client<interfaces::srv::LedControl>::SharedPtr led_control_client;
-	rclcpp::Client<interfaces::srv::LedToggleControl>::SharedPtr led_toggle_control_client;
-	rclcpp::Client<interfaces::srv::ToggleOn>::SharedPtr toggle_on_client;
 	rclcpp::Client<std_srvs::srv::Empty>::SharedPtr request_nomotion_update_client;
 	rclcpp::Client<nav2_msgs::srv::ClearEntireCostmap>::SharedPtr clear_entire_local_costmap_client;
 	rclcpp::Client<nav2_msgs::srv::ClearEntireCostmap>::SharedPtr clear_entire_global_costmap_client;
@@ -2371,8 +2314,10 @@ int main(int argc, char * argv[])
 	//rclcpp::WallRate loop_rate(30);
 
 	//LED On
-	node->LedToggleControl_Call(1,3,100,3,1);
-    node->ToggleOn_Call(63);
+	std_msgs::msg::Int32 status_msg;
+	status_msg.data = 0; // 0: Normal / IDLE 상태
+	node->robot_status_publisher->publish(status_msg);
+
 	/////////////////////////////////////////////////////////////////
 	printf("□□■■■■□□□■■■■■■□□■■■■■□□□■□□□□□■□■□□□□■■■■□□□■■■■■■□\n");
 	printf("□■□□□□■□□■□□□□□□□■□□□□■□□■□□□□□■□■□□□■□□□□■□□■□□□□□□\n");
