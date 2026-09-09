@@ -72,6 +72,9 @@ int m_emg_state = 0;
 //Error Code
 int m_left_error_code = 0;
 int m_right_error_code = 0;
+// fuse state
+int m_left_fuse = 0;
+int m_right_fuse = 0;
 //Position move
 int m_iPOS_Y = 0;
 int m_iPOS_Theta = 0;
@@ -582,17 +585,38 @@ int main(int argc, char * argv[])
 		if(!bPosition_mode_flag) //Velocity mode only
 		{
 			node->SetMoveCommand(control_linear, control_angular);
-			// dssp_rs232_drv_module_read_bumper_emg(&m_bumper_data, &m_emg_state, &m_left_error_code, &m_right_error_code);
+			dssp_rs232_drv_module_read_drive_err(&m_left_error_code, &m_right_error_code, &m_left_fuse, &m_right_fuse);
 		}
+
+		bool is_left_err = (m_left_error_code != 48);
+		bool is_right_err = (m_right_error_code != 48);
+		bool is_left_fuse_err = (m_left_fuse == 0);
+		bool is_right_fuse_err = (m_right_fuse == 0);
 		
-		// if(!bPosition_mode_flag&& m_left_error_code != 48 || m_right_error_code != 48)
-		// {
-		// 	printf("[Motor Driver Error] Left Error Code: %d \n", m_left_error_code);
-		// 	printf("[Motor Driver Error] Right Error Code: %d \n", m_right_error_code);
-		// 	dssp_rs232_drv_module_set_drive_err_reset();
-		// 	usleep(1000);
-		// 	dssp_rs232_drv_module_set_servo(1); //Servo On
-		// }
+		if(!bPosition_mode_flag && (is_left_err || is_right_err || is_left_fuse_err || is_right_fuse_err))
+		{
+			printf("======================================\n");
+			printf("[Motor Driver Error Detected]\n");
+
+			if(is_left_err){
+				printf("  - Left Motor Error Code: %d\n", m_left_error_code);
+			}
+			if(is_right_err){
+				printf("  - Right Motor Error Code: %d\n", m_right_error_code);
+			}
+
+			if(is_left_fuse_err){
+				printf("  - Left Fuse : FAIL (State: %d)\n", m_left_fuse);
+			}
+			if(is_right_fuse_err){
+				printf("  - Right Fuse : FAIL (State: %d)\n", m_right_fuse);
+			}
+			printf("======================================\n");
+
+			dssp_rs232_drv_module_set_drive_err_reset();
+			usleep(1000);
+			dssp_rs232_drv_module_set_servo(1); //Servo On
+		}
 
 		//odometry calback//
 		coordinates[0] = (m_dX_pos /10000.0);

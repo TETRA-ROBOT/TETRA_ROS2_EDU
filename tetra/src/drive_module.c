@@ -255,68 +255,30 @@ int drvm_set_position(int fd, int type, int pass, int data)
 	return ret;
 }
 
-int drvm_read_bumper_emg(int fd, int *bumper, int *emg_state, int *left_error_code, int *right_error_code)
+int drvm_read_drive_err(int fd, int *left_error_code, int *right_error_code, int *left_fuse, int *right_fuse)
 {
 	int ret;
 	unsigned char packet_buf[255] = {STX, 'A', 'A', ETX};
-	int bumper_val1, bumper_val2;
-	int emg_val;
-	int binary[16] = {0};
 
 	if(!fd) return -1;
 
 	packet_buf[4] = make_lrc(&packet_buf[1], 3);
 
 	ret = write(fd, packet_buf, 5);
-	//fflush(fd);
 	if(ret <= 0) return -2;
 
 	memset(packet_buf, 0, sizeof(unsigned char)*255);
 	ret = get_response(fd, packet_buf);
 	if(ret !=0 ) return ret;
 
-	//Error Code add...
-	memset(binary, 0, sizeof(int)*16);
-	*left_error_code = packet_buf[3];
-	memset(binary, 0, sizeof(int)*16);
-	*right_error_code = packet_buf[5];
+	// Motor Error
+	*left_error_code = packet_buf[3];				//DATA1 (Left Motor Error Code)
+	*right_error_code = packet_buf[5];				//DATA3 (Right Motor Error Code)
 
-	memset(binary, 0, sizeof(int)*16);
-	bumper_val1 = packet_buf[7] & 0x0f;
-	
-	memset(binary, 0, sizeof(int)*16);
-	bumper_val2 = packet_buf[6] & 0x0f;
+	// fuse state
+	*left_fuse  = (packet_buf[2] & 0x20) >> 5;		//DATA0의 BIT5 (Left Fuse)
+    *right_fuse = (packet_buf[4] & 0x20) >> 5;		//DATA2의 BIT5 (Right Fuse)
 
-	*bumper = (bumper_val1) + (bumper_val2 << 4);
-
-	memset(binary, 0, sizeof(int)*16);
-	emg_val = packet_buf[8];
-	decimal2binary(emg_val, binary);
-	*emg_state = binary[0];
-
-	return ret;
-}
-
-int drvm_read_drive_err(int fd, unsigned char *left_wheel_err, unsigned char *right_wheel_err)
-{
-	int ret;
-	unsigned char packet_buf[256] = {STX, 'A', 'A', ETX};
-	int binary[16] = {0};
-
-	if(!fd) return -1;
-
-	packet_buf[4] = make_lrc(&packet_buf[1], 3);
-
-	ret = write(fd, packet_buf, 5);
-	//fflush(fd);
-	if(ret <= 0) return -2;
-
-	memset(packet_buf, 0, sizeof(unsigned char)*255);
-	ret = get_response(fd, packet_buf);
-	if(ret != 0 ) return ret;
-
-	*left_wheel_err = packet_buf[3];
-	*right_wheel_err = packet_buf[5];
 	return ret;
 }
 

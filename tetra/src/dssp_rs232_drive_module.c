@@ -46,20 +46,11 @@ int  dssp_rs232_drv_module_read_odometry(double *Xpos_mm, double *Ypos_mm, doubl
 	return ret;
 }
 	
-int  dssp_rs232_drv_module_read_bumper_emg(int *bumper_data, int *emg_state, int *left_error_code, int *right_error_code)
+int  dssp_rs232_drv_module_read_drive_err(int *left_error_code, int *right_error_code, int *left_fuse, int *right_fuse)
 {
 	int ret;
 
-	ret = drvm_read_bumper_emg(_drv, bumper_data, emg_state, left_error_code, right_error_code);
-
-	return ret;
-}
-
-int  dssp_rs232_drv_module_read_drive_err(unsigned char *left_wheel_err, unsigned char *right_wheel_err)
-{
-	int ret;
-
-	ret = drvm_read_drive_err(_drv, left_wheel_err, right_wheel_err);
+	ret = drvm_read_drive_err(_drv, left_error_code, right_error_code, left_fuse, right_fuse);
 
 	return ret;
 }
