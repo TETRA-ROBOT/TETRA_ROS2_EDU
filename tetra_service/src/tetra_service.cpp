@@ -79,6 +79,7 @@ using namespace std::chrono_literals;
 #define MAX_RETRY_CNT 10
 #define BUF_LEN 4096
 int m_dHome_ID = 0;
+double m_dDocking_lateral_offset = 0.0; //Docking 좌우 미세 보정 [m] (오른쪽 +)
 
 FILE *fp;
 int status;
@@ -432,6 +433,9 @@ public:
 			this->declare_parameter<int>("m_dHome_ID", 0);
 			m_dHome_ID = this->get_parameter("m_dHome_ID").as_int();
 			RCLCPP_INFO(this->get_logger(), "m_dHome_ID = %d", m_dHome_ID);
+			this->declare_parameter<double>("docking_lateral_offset", 0.0);
+			m_dDocking_lateral_offset = this->get_parameter("docking_lateral_offset").as_double();
+			RCLCPP_INFO(this->get_logger(), "docking_lateral_offset = %.3f", m_dDocking_lateral_offset);
 		} catch (const std::exception& e) {
 			RCLCPP_ERROR(this->get_logger(), "Exception during parameter retrieval: %s", e.what());
 		}
@@ -569,7 +573,28 @@ public:
 		}
 	}
 
-	void LinetagCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) 
+	//Docking 제어용 태그 위치 계산 (카메라가 아닌 로봇 중심선 기준)
+	//m_transform_old_pose_x: 카메라 위치 기준 전방 거리, m_transform_old_pose_y: base_link 중심선 기준 횡방향 (오른쪽 +)
+	bool Calc_Docking_Target_Pose(const string &target_frame)
+	{
+		geometry_msgs::msg::TransformStamped tf_tag_base, tf_cam_base;
+		try
+		{
+			tf_tag_base = tf2_buffer_->lookupTransform("base_link", target_frame, tf2::TimePointZero);
+			tf_cam_base = tf2_buffer_->lookupTransform("base_link", "camera_color_optical_frame", tf2::TimePointZero);
+		}
+		catch (tf2::TransformException &ex)
+		{
+			RCLCPP_WARN(this->get_logger(), "Docking target TF lookup failed: %s", ex.what());
+			return false;
+		}
+
+		_pAR_tag_pose.m_transform_old_pose_x = tf_tag_base.transform.translation.x - tf_cam_base.transform.translation.x;
+		_pAR_tag_pose.m_transform_old_pose_y = -tf_tag_base.transform.translation.y + m_dDocking_lateral_offset;
+		return true;
+	}
+
+	void LinetagCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 	{
 		if (!tf2_buffer_->canTransform("camera_color_optical_frame", "docking_target", tf2::TimePointZero)) {
 			_pAR_tag_pose.m_iApril_tag_id = -1;
@@ -610,8 +635,10 @@ public:
 		m.getRPY(_pAR_tag_pose.m_dApril_tag_roll, _pAR_tag_pose.m_dApril_tag_pitch, _pAR_tag_pose.m_dApril_tag_yaw);
 		//Transform Axis
 		_pAR_tag_pose.m_dPositioning_Angle = _pAR_tag_pose.m_dApril_tag_pitch;
-		_pAR_tag_pose.m_transform_old_pose_x = _pAR_tag_pose.m_dApril_tag_pose_z;
-		_pAR_tag_pose.m_transform_old_pose_y = _pAR_tag_pose.m_dApril_tag_pose_x;
+		if(!Calc_Docking_Target_Pose("docking_target"))
+		{
+			return;
+		}
 
 		if(_pAR_tag_pose.m_dPositioning_Angle > 0.0)
 		{
@@ -687,8 +714,10 @@ public:
 			m.getRPY(_pAR_tag_pose.m_dApril_tag_roll, _pAR_tag_pose.m_dApril_tag_pitch, _pAR_tag_pose.m_dApril_tag_yaw);
 			//Transform Axis
 			_pAR_tag_pose.m_dPositioning_Angle = _pAR_tag_pose.m_dApril_tag_pitch;
-			_pAR_tag_pose.m_transform_old_pose_x = _pAR_tag_pose.m_dApril_tag_pose_z;
-			_pAR_tag_pose.m_transform_old_pose_y = _pAR_tag_pose.m_dApril_tag_pose_x;
+			if(!Calc_Docking_Target_Pose(strTF_frame_name))
+			{
+				return;
+			}
 
 			// yaw 회전용 쿼터니언 생성 (90도 = M_PI/2 라디안)
 			tf2::Quaternion q_yaw;
@@ -714,7 +743,7 @@ public:
 				_pAR_tag_pose.m_transform_pose_x = _pAR_tag_pose.m_transform_old_pose_x;
 				if(_pAR_tag_pose.m_transform_old_pose_y > 0)
 				{
-					_pAR_tag_pose.m_transform_pose_y = _pAR_tag_pose.m_transform_old_pose_y * -0.1; 
+					_pAR_tag_pose.m_transform_pose_y = _pAR_tag_pose.m_transform_old_pose_y * -1.0;
 				}
 				else
 				{
