@@ -190,6 +190,8 @@ def generate_launch_description():
 		IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			[get_package_share_directory('realsense2_camera'), '/launch/rs_launch.py']),
+		# depth 스트림 없이 TF 를 발행하면 camera_color_frame 이 NaN 으로 나옴 -> 카메라 TF 는 URDF(tetra.xacro)에서 정의
+		launch_arguments={'publish_tf': 'false'}.items(),
 		),
 
         ]
