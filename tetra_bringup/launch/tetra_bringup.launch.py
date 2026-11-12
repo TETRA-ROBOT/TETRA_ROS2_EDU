@@ -163,6 +163,19 @@ def generate_launch_description():
         ]
     )
     
+    # camera_info 보정값 보완 (컬러 센서 보정 테이블이 비어 NaN 으로 나오는 카메라 대응)
+    camera_info_fix_node = Node(
+        package='tetra_bringup',
+        executable='camera_info_fix.py',
+        name='camera_info_fix',
+        output='screen',
+        parameters=[os.path.join(get_package_share_directory("tetra_bringup"), 'params', 'camera_info_fix.yaml')],
+        remappings=[
+            ('camera_info_in', '/camera/color/camera_info'),
+            ('camera_info_out', '/camera/color/camera_info_fixed'),
+        ]
+    )
+
     # create and return launch description object
     return LaunchDescription(
         [
@@ -179,6 +192,7 @@ def generate_launch_description():
             kanavi_lidar_node,
             pointcloud_to_scan_node,
             web_video_server_node,
+            camera_info_fix_node,
 
         # apriltag_ros 
 		IncludeLaunchDescription(

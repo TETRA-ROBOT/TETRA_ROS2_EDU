@@ -10,6 +10,7 @@ nav2_package()
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 #install(DIRECTORY rviz DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY params DESTINATION share/${PROJECT_NAME})
+install(PROGRAMS scripts/camera_info_fix.py DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

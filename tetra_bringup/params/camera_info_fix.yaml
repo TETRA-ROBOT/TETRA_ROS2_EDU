@@ -1,0 +1,13 @@
+# 컬러 카메라 보정값(camera_info)이 NaN 으로 나오는 카메라에서만 사용되는 대체 값.
+# 아래 값은 RealSense D435(i) 컬러 640x480 의 공칭(nominal) 값이며 개체별 실제 값과 수 % 차이가 날 수 있다.
+# 체커보드 캘리브레이션(camera_calibration) 결과가 있으면 이 값을 교체할 것.
+# 다른 해상도로 스트리밍하면 width/height 기준으로 비례 스케일된다.
+camera_info_fix:
+  ros__parameters:
+    width: 640
+    height: 480
+    fx: 616.0
+    fy: 616.0
+    cx: 320.0
+    cy: 240.0
+    d: [0.0, 0.0, 0.0, 0.0, 0.0]
