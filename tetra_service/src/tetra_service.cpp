@@ -67,6 +67,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <cmath>
 #include <unistd.h>
 #include <dirent.h>
 #include <atomic>
@@ -80,6 +81,13 @@ using namespace std::chrono_literals;
 #define BUF_LEN 4096
 int m_dHome_ID = 0;
 double m_dDocking_lateral_offset = 0.0; //Docking 좌우 미세 보정 [m] (오른쪽 +)
+double m_dDocking_yaw_tolerance = 1.0 * M_PI / 180.0; //0.65m 정지 지점 허용 heading 오차 [rad]
+double m_dDocking_lateral_tolerance = 0.02; //0.65m 정지 지점 허용 횡방향 오차 [m] (초과 시 후진 재시도)
+double m_dDocking_lookahead = 0.3; //도킹 라인 추종 lookahead 거리 [m]
+int    m_iDocking_max_retry = 2; //후진 재시도 최대 횟수
+int    m_iDocking_retry_cnt = 0;
+double m_dDocking_min_angular = 0.12; //제자리 회전 최소 각속도 [rad/s] (모터 데드밴드 이상)
+int    m_iYaw_start_sign = 0;
 
 FILE *fp;
 int status;
@@ -176,6 +184,9 @@ typedef struct AR_TAG_POSE
     //Calc Odom to apriltag_TF
     double m_target_yaw = 0.0;
     double m_target_theta = 0.0;
+    //Docking 라인(태그 법선) 기준 로봇 heading 오차 [rad] (왼쪽 회전 필요 +, 저역통과 필터 적용)
+    double m_dDock_heading_err = 0.0;
+    bool   m_bDock_heading_valid = false;
 
 }AR_TAG_POSE;
 AR_TAG_POSE _pAR_tag_pose;
@@ -436,6 +447,18 @@ public:
 			this->declare_parameter<double>("docking_lateral_offset", 0.0);
 			m_dDocking_lateral_offset = this->get_parameter("docking_lateral_offset").as_double();
 			RCLCPP_INFO(this->get_logger(), "docking_lateral_offset = %.3f", m_dDocking_lateral_offset);
+			this->declare_parameter<double>("docking_yaw_tolerance_deg", 1.0);
+			m_dDocking_yaw_tolerance = this->get_parameter("docking_yaw_tolerance_deg").as_double() * M_PI / 180.0;
+			this->declare_parameter<double>("docking_lateral_tolerance", 0.02);
+			m_dDocking_lateral_tolerance = this->get_parameter("docking_lateral_tolerance").as_double();
+			this->declare_parameter<double>("docking_lookahead", 0.3);
+			m_dDocking_lookahead = this->get_parameter("docking_lookahead").as_double();
+			this->declare_parameter<int>("docking_max_retry", 2);
+			m_iDocking_max_retry = this->get_parameter("docking_max_retry").as_int();
+			this->declare_parameter<double>("docking_min_angular", 0.12);
+			m_dDocking_min_angular = this->get_parameter("docking_min_angular").as_double();
+			RCLCPP_INFO(this->get_logger(), "docking yaw_tol=%.2fdeg lateral_tol=%.3f lookahead=%.2f max_retry=%d",
+				m_dDocking_yaw_tolerance * 180.0 / M_PI, m_dDocking_lateral_tolerance, m_dDocking_lookahead, m_iDocking_max_retry);
 		} catch (const std::exception& e) {
 			RCLCPP_ERROR(this->get_logger(), "Exception during parameter retrieval: %s", e.what());
 		}
@@ -591,7 +614,56 @@ public:
 
 		_pAR_tag_pose.m_transform_old_pose_x = tf_tag_base.transform.translation.x - tf_cam_base.transform.translation.x;
 		_pAR_tag_pose.m_transform_old_pose_y = -tf_tag_base.transform.translation.y + m_dDocking_lateral_offset;
+
+		//태그 법선(z축)을 base_link 평면에 투영해 로봇이 회전해야 할 heading 오차 계산
+		tf2::Quaternion q_tag(tf_tag_base.transform.rotation.x, tf_tag_base.transform.rotation.y,
+							  tf_tag_base.transform.rotation.z, tf_tag_base.transform.rotation.w);
+		tf2::Vector3 tag_z = tf2::quatRotate(q_tag, tf2::Vector3(0.0, 0.0, 1.0));
+		double heading = atan2(tag_z.y(), tag_z.x());
+		//태그 z축 방향 규약(태그 안쪽/바깥쪽)에 무관하도록 ±90deg 이내로 정규화
+		if(heading > M_PI_2) heading -= M_PI;
+		else if(heading < -M_PI_2) heading += M_PI;
+		if(std::isfinite(heading))
+		{
+			if(_pAR_tag_pose.m_bDock_heading_valid)
+				_pAR_tag_pose.m_dDock_heading_err += 0.3 * (heading - _pAR_tag_pose.m_dDock_heading_err);
+			else
+				_pAR_tag_pose.m_dDock_heading_err = heading;
+			_pAR_tag_pose.m_bDock_heading_valid = true;
+		}
 		return true;
+	}
+
+	//도킹 라인(태그 중심을 지나고 태그 법선 방향인 직선) 추종 제어
+	//라인 위 lookahead 지점을 향해 조향하므로 접근하는 동안 heading 과 횡방향 오차가 함께 수렴함
+	//return: 로봇 기준 lookahead 지점 방위각 [rad] (왼쪽 +)
+	double Calc_Docking_Line_Steer(double lookahead)
+	{
+		double tx = _pAR_tag_pose.m_transform_old_pose_x;   //전방 +
+		double ty = -_pAR_tag_pose.m_transform_old_pose_y;  //왼쪽 +
+		if(!_pAR_tag_pose.m_bDock_heading_valid)
+		{
+			return atan2(ty, tx);
+		}
+		double phi = _pAR_tag_pose.m_dDock_heading_err;
+		double dx = cos(phi), dy = sin(phi);
+		//로봇(원점)을 라인에 투영한 위치 (태그 기준, 음수 = 태그 앞)
+		double s0 = -(tx * dx + ty * dy);
+		double s = s0 + lookahead;
+		if(s > 0.0) s = 0.0; //태그를 넘어서는 지점은 겨냥하지 않음
+		double cx = tx + s * dx;
+		double cy = ty + s * dy;
+		if(cx < 0.05) return atan2(ty, tx);
+		return atan2(cy, cx);
+	}
+
+	//도킹 라인 기준 횡방향 오차 [m] (로봇이 라인 왼쪽 +)
+	double Calc_Docking_Lateral_Error()
+	{
+		double tx = _pAR_tag_pose.m_transform_old_pose_x;
+		double ty = -_pAR_tag_pose.m_transform_old_pose_y;
+		double phi = _pAR_tag_pose.m_bDock_heading_valid ? _pAR_tag_pose.m_dDock_heading_err : 0.0;
+		return tx * sin(phi) - ty * cos(phi);
 	}
 
 	void LinetagCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
@@ -772,6 +844,7 @@ public:
 			_pAR_tag_pose.m_dApril_tag_pitch = 0.0;
 			_pAR_tag_pose.m_dApril_tag_yaw = 0.0;
 			_pAR_tag_pose.m_dPositioning_Angle = 0.0;
+			_pAR_tag_pose.m_bDock_heading_valid = false;
 
 		}
 	}
@@ -1317,48 +1390,55 @@ public:
 			if(_pAR_tag_pose.m_iApril_tag_id == marker_id)
 			{	
 				m_fdistance = sqrt(_pAR_tag_pose.m_transform_old_pose_x * _pAR_tag_pose.m_transform_old_pose_x + _pAR_tag_pose.m_transform_old_pose_y * _pAR_tag_pose.m_transform_old_pose_y);
-				printf("master_distance ->: %.5f \n", m_fdistance);
+				m_iNoMarker_cnt = 0; //연속 미검출만 카운트
 				if(m_fdistance > 0.65)
 				{
-					cmd.linear.x = 1.0 * (m_fdistance /1.2) * 0.15; 
-					if(cmd.linear.x > 1.0)
-					{
-						//Linear Over speed exit loop...
-						cmd.linear.x =  0.0; 
-						cmd.angular.z = 0.0;
-						printf("[Linear Over speed]: follower is closing \n");
-						return false;
-					}
-						
-					cmd.angular.z = -1.0 * atan2(_pAR_tag_pose.m_transform_old_pose_y, _pAR_tag_pose.m_transform_old_pose_x) / 1.25;
-					if((cmd.angular.z > 1.0) || (cmd.angular.z < -1.0))
-					{
-						//Angular Over speed exit loop......
-						cmd.linear.x =  0.0; 
-						cmd.angular.z = 0.0;
-						printf("[Angular Over speed]: follower is closing \n");
-						return false;
-					}
-					printf("cmd.linear.x ->: %.5f \n", cmd.linear.x);
-					printf("cmd.angular.z ->: %.5f \n", cmd.angular.z);
+					//도킹 라인 추종: 태그 점이 아니라 태그 법선 위 lookahead 지점을 겨냥 -> 0.65m 도착 시 정렬된 상태
+					double steer = Calc_Docking_Line_Steer(m_dDocking_lookahead);
+					double v = (m_fdistance / 1.2) * 0.15;
+					if(v > 0.15) v = 0.15;
+					//방향 오차가 클 때는 감속
+					double c = cos(steer);
+					v *= (c > 0.3) ? c : 0.3;
+					double w = 0.8 * steer;
+					if(w > 0.4) w = 0.4;
+					else if(w < -0.4) w = -0.4;
+					cmd.linear.x = v;
+					cmd.angular.z = w;
+					printf("dist: %.3f heading_err: %.2fdeg lateral: %.3f -> v: %.3f w: %.3f \n", m_fdistance,
+						_pAR_tag_pose.m_dDock_heading_err * 180.0 / M_PI, Calc_Docking_Lateral_Error(), v, w);
 					cmd_vel_publisher->publish(cmd);
-					
 				}
 				else
 				{
-					cmd.linear.x =  0.0;
-					cmd_vel_publisher->publish(cmd);
-					_pAR_tag_pose.m_target_yaw = _pAR_tag_pose.m_dApril_tag_pitch;
-					_pAR_tag_pose.m_target_theta = _pAR_tag_pose.m_dPositioning_Angle;
-					if(_pAR_tag_pose.m_target_yaw <= 0.0174533 && _pAR_tag_pose.m_target_yaw >= -0.0174533) //+- 1.0deg
+					double heading_err = _pAR_tag_pose.m_dDock_heading_err;
+					double lateral_err = Calc_Docking_Lateral_Error();
+					printf("[Docking check] heading_err: %.2fdeg lateral: %.3f retry: %d \n",
+						heading_err * 180.0 / M_PI, lateral_err, m_iDocking_retry_cnt);
+					bool lateral_ng = fabs(lateral_err) > m_dDocking_lateral_tolerance && m_iDocking_retry_cnt < m_iDocking_max_retry;
+					if(!lateral_ng && fabs(heading_err) <= m_dDocking_yaw_tolerance)
 					{
+						//정렬 OK: 멈추지 않고 그대로 최종 진입 (속도 명령 유지)
 						m_iDocking_CommandMode = 4;
-						//printf("[OK]_pAR_tag_pose.m_target_yaw: %.5f \n", _pAR_tag_pose.m_target_yaw);
+					}
+					else if(lateral_ng)
+					{
+						cmd.linear.x =  0.0;
+						cmd.angular.z = 0.0;
+						cmd_vel_publisher->publish(cmd);
+						//횡방향 오차가 커서 제자리 회전으로 보정 불가 -> 후진 후 재접근
+						m_iDocking_retry_cnt++;
+						m_iBack_cnt = 0;
+						m_iDocking_CommandMode = 31;
 					}
 					else
 					{
+						cmd.linear.x =  0.0;
+						cmd.angular.z = 0.0;
+						cmd_vel_publisher->publish(cmd);
+						m_iRotation_cnt = 0;
+						m_iYaw_start_sign = 0;
 						m_iDocking_CommandMode = 3;
-						//printf("[NG]_pAR_tag_pose.m_target_yaw: %.5f \n", _pAR_tag_pose.m_target_yaw);
 					}
 
 					m_iNoMarker_cnt = 0;
@@ -1366,8 +1446,25 @@ public:
 			}
 			else
 			{
-				printf("[ChargingStation_tracking] No Marker, Rotation Movement !!! %d, %d\n", _pAR_tag_pose.m_iApril_tag_id , marker_id);
-				cmd.angular.z = Rotation_Movement(); //0.1;
+				//기존: angular 만 바꾸고 linear 는 직전 값(전진)을 유지 -> 순간 미검출 때마다 로봇이 엉뚱하게 꺾이며 전진함
+				if(m_iNoMarker_cnt < 30)
+				{
+					//0.3s 이내 순간 미검출(모션 블러 등): 직전 속도 명령 유지 -> 멈칫거림 방지
+					if(m_iNoMarker_cnt == 0) printf("[ChargingStation_tracking] Marker lost, coast... %d, %d\n", _pAR_tag_pose.m_iApril_tag_id , marker_id);
+				}
+				else if(m_iNoMarker_cnt < 50)
+				{
+					//잠시 정지 후 재검출 대기
+					cmd.linear.x = 0.0;
+					cmd.angular.z = 0.0;
+				}
+				else
+				{
+					//계속 안 보이면 제자리 회전 탐색
+					cmd.linear.x = 0.0;
+					cmd.angular.z = Rotation_Movement(); //0.1;
+					if(m_iNoMarker_cnt % 100 == 50) printf("[ChargingStation_tracking] No Marker, Rotation Movement !!! %d, %d\n", _pAR_tag_pose.m_iApril_tag_id , marker_id);
+				}
 				cmd_vel_publisher->publish(cmd);
 
 				if(m_iNoMarker_cnt > 8000) //retry timeout!!
@@ -1400,82 +1497,52 @@ public:
 		return bResult;
 	}
 
+	//0.65m 정지 지점에서 제자리 회전으로 heading 정렬 (실시간 태그 heading 사용, 후진 없음)
 	bool ChargingStation_Yaw_tracking()
-	{ 
-		bool bResult = false;
-		float m_fdistance = 0.0;
-		m_fdistance = sqrt(_pAR_tag_pose.m_transform_old_pose_x * _pAR_tag_pose.m_transform_old_pose_x + _pAR_tag_pose.m_transform_old_pose_y * _pAR_tag_pose.m_transform_old_pose_y);
-		//printf("master_distance ->: %.5f \n", m_fdistance);
-		if(_pAR_tag_pose.m_target_yaw <= 0.0174533/1.5 && _pAR_tag_pose.m_target_yaw >= -0.0174533/1.5) //+- 1.0deg
+	{
+		bool bResult = true;
+		if(_pAR_tag_pose.m_iApril_tag_id != _pRobot.HOME_id || !_pAR_tag_pose.m_bDock_heading_valid)
 		{
-			m_iDocking_CommandMode = 4;
-			bResult = true;
+			//회전 중 태그를 놓치면 정지 후 대기, 일정 시간 지나면 재탐색
+			cmd.linear.x = 0.0;
+			cmd.angular.z = 0.0;
+			cmd_vel_publisher->publish(cmd);
+			if(++m_iRotation_cnt > 300)
+			{
+				m_iRotation_cnt = 0;
+				m_iDocking_CommandMode = 2;
+			}
 			return bResult;
 		}
 
-		if(_pAR_tag_pose.m_target_yaw > 0) //[++dir] 
+		double heading_err = _pAR_tag_pose.m_dDock_heading_err;
+		int err_sign = (heading_err > 0) ? 1 : -1;
+		if(m_iYaw_start_sign == 0) m_iYaw_start_sign = err_sign;
+		//정렬 완료 / 목표 지나침(부호 반전) / 5s timeout
+		if(fabs(heading_err) <= m_dDocking_yaw_tolerance * 0.5 || err_sign != m_iYaw_start_sign || m_iRotation_cnt > 500)
 		{
-			if(m_iRotation_cnt <= 100)
-			{
-				if(_pFlag_Value.m_bFlag_Obstacle_cygbot)
-				{
-					//Stop
-					cmd.linear.x = 0.0; 
-					cmd.angular.z = 0.0;
-					cmd_vel_publisher->publish(cmd);
-					printf("[Stop]: Obstacle Detections! (Rear: %d ) \n", _pFlag_Value.m_bFlag_Obstacle_cygbot);
-				}
-				else
-				{
-					//rotation move
-					cmd.linear.x = -1.0 * m_fdistance * 0.1;
-					cmd.angular.z = -1.0 * _pAR_tag_pose.m_target_yaw * 2.8;
-					cmd_vel_publisher->publish(cmd);
-					m_iRotation_cnt ++;
-				}
-				
-			}
-			else
-			{
-				m_iRotation_cnt = 0;
-				m_iDocking_CommandMode = 31;
-				
-			}
-
-			m_iRotation_Mode = 2;
-		}
-		else //[--dir] 
-		{
-			if(m_iRotation_cnt <= 100)
-			{
-				if(_pFlag_Value.m_bFlag_Obstacle_cygbot)
-				{
-					//Stop
-					cmd.linear.x = 0.0; 
-					cmd.angular.z = 0.0;
-					cmd_vel_publisher->publish(cmd);
-					printf("[Stop]: Obstacle Detections! (Rear: %d ) \n", _pFlag_Value.m_bFlag_Obstacle_cygbot);
-				}
-				else
-				{
-					//rotation move
-					cmd.linear.x = -1.0 * m_fdistance * 0.1;
-					cmd.angular.z = -1.0 * _pAR_tag_pose.m_target_yaw * 2.8;
-					cmd_vel_publisher->publish(cmd);
-					m_iRotation_cnt ++;
-				}
-				
-			}
-			else
-			{
-				m_iRotation_cnt = 0;
-				m_iDocking_CommandMode = 31;
-			}
-				
-			m_iRotation_Mode = 1;
+			cmd.linear.x = 0.0;
+			cmd.angular.z = 0.0;
+			cmd_vel_publisher->publish(cmd);
+			printf("[Yaw tracking] done heading_err: %.2fdeg cnt: %d \n", heading_err * 180.0 / M_PI, m_iRotation_cnt);
+			m_iRotation_cnt = 0;
+			m_iYaw_start_sign = 0;
+			m_iDocking_CommandMode = 4;
+			return bResult;
 		}
 
-		bResult = true;
+		//모터가 실제로 돌 수 있는 최소 각속도 보장 (너무 작으면 바퀴가 마찰에 걸려 멈춰 있음)
+		double w = 1.5 * heading_err;
+		double w_min = m_dDocking_min_angular, w_max = 0.3;
+		if(fabs(w) < w_min) w = err_sign * w_min;
+		if(w > w_max) w = w_max;
+		else if(w < -w_max) w = -w_max;
+		cmd.linear.x = 0.0;
+		cmd.angular.z = w;
+		cmd_vel_publisher->publish(cmd);
+		m_iRotation_cnt++;
+		m_iRotation_Mode = (heading_err > 0) ? 1 : 2;
+
 		return bResult;
 	}
 
@@ -1526,29 +1593,26 @@ public:
 		if(_pAR_tag_pose.m_iApril_tag_id == marker_id)
 		{
 			m_fdistance = sqrt(_pAR_tag_pose.m_transform_old_pose_x * _pAR_tag_pose.m_transform_old_pose_x + _pAR_tag_pose.m_transform_old_pose_y * _pAR_tag_pose.m_transform_old_pose_y);
+			m_iNoMarker_cnt = 0; //연속 미검출만 카운트
 			//printf("master_distance: %.5f \n", m_fdistance);
 			if(_pRobot.m_iCallback_Charging_status < 2)
 			{
 				cmd.linear.x = 1.0 * (m_fdistance /1.2) * 0.1; //max speed 0.1m/s
-				if(cmd.linear.x > 1.0)
-				{
-					//Linear Over speed exit loop......
-					cmd.linear.x =  0.0; 
-					cmd.angular.z = 0.0;
-					printf("[Linear Over speed]: follower is closing \n");
-					return false;
-				}
-				
-				cmd.angular.z = -1.0 * atan2(_pAR_tag_pose.m_transform_old_pose_y, _pAR_tag_pose.m_transform_old_pose_x) / 1.25;
-				if((cmd.angular.z > 1.0) || (cmd.angular.z < -1.0))
-				{
-					//Angular Over speed exit loop......
-					cmd.linear.x =  0.0; 
-					cmd.angular.z = 0.0;
-					printf("[Angular Over speed]: follower is closing \n");
-					return false;
-				}
-				
+				if(cmd.linear.x > 0.1) cmd.linear.x = 0.1;
+
+				//최종 접근: 가까워질수록 횡방향 보정 비중을 줄이고 heading(정면) 정렬 우선
+				//(마지막 구간에서 횡오차를 쫓으면 로봇이 비스듬히 틀어진 채 도킹됨)
+				double heading_err = _pAR_tag_pose.m_bDock_heading_valid ? _pAR_tag_pose.m_dDock_heading_err : 0.0;
+				double lateral_err = Calc_Docking_Lateral_Error();
+				double f = (m_fdistance - 0.40) / (0.65 - 0.40);
+				if(f < 0.0) f = 0.0;
+				else if(f > 1.0) f = 1.0;
+				double steer = heading_err - f * atan2(lateral_err, 0.3);
+				double w = 1.0 * steer;
+				if(w > 0.3) w = 0.3;
+				else if(w < -0.3) w = -0.3;
+				cmd.angular.z = w;
+
 				cmd_vel_publisher->publish(cmd);
 			}
 			else
@@ -1563,11 +1627,15 @@ public:
 		}
 		else
 		{
-			cmd.linear.x =  0.0; 
-			cmd.angular.z = 0.0;
+			if(m_iNoMarker_cnt >= 30)
+			{
+				//0.3s 이상 연속 미검출: 정지 (그 전에는 직전 명령 유지 -> 멈칫거림 방지)
+				cmd.linear.x =  0.0;
+				cmd.angular.z = 0.0;
+			}
 			cmd_vel_publisher->publish(cmd);
-			printf("[ChargingStation_tracking2] No Marker 2! \n");
-			if(m_iNoMarker_cnt >= 10)
+			if(m_iNoMarker_cnt == 0) printf("[ChargingStation_tracking2] No Marker 2! \n");
+			if(m_iNoMarker_cnt >= 50) //0.5s 연속 미검출
 			{
 				m_iNoMarker_cnt = 0;
 				m_iDocking_CommandMode = 8;
@@ -1598,6 +1666,11 @@ public:
 					printf("Docking Loop 1 Start... \n");
 					// LedToggleControl_Call(1,3,100,3,100);
     				// 	ToggleOn_Call(63);
+					m_iDocking_retry_cnt = 0;
+					m_iRotation_cnt = 0;
+					m_iYaw_start_sign = 0;
+					m_iBack_cnt = 0;
+					m_iNoMarker_cnt = 0;
 					m_iDocking_CommandMode = 2;
 					break;
 				case 2:

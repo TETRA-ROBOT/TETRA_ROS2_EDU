@@ -85,7 +85,8 @@ def generate_launch_description():
         respawn= True,
         output='screen',
         parameters=[
-            {"m_dHome_ID": 0}
+            {"m_dHome_ID": 0,
+             "docking_lateral_offset": -0.01}  # 도킹 좌우 보정 [m] (오른쪽 +, 왼쪽 -)
         ]
     )
 
