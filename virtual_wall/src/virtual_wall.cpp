@@ -15,6 +15,7 @@
 #include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/int32.hpp"
 #include "std_srvs/srv/empty.hpp"
+#include "nav2_msgs/srv/clear_entire_costmap.hpp"
 //geometry msg//
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "geometry_msgs/msg/pose_array.hpp"
@@ -118,6 +119,10 @@ public:
             "add_virtual_wall_cmd",
         std::bind(&VIRTUAL_WALL::Add_Virtual_Obstacle_Command, this, std::placeholders::_1, std::placeholders::_2));
 		
+		//costmap clear client (가상벽 삭제 시 사용)
+		clear_global_costmap_client_ = this->create_client<nav2_msgs::srv::ClearEntireCostmap>("/global_costmap/clear_entirely_global_costmap");
+		clear_local_costmap_client_  = this->create_client<nav2_msgs::srv::ClearEntireCostmap>("/local_costmap/clear_entirely_local_costmap");
+
 		//map -> odom TF CALC Timer
 		CALC_TF_timer_ = this->create_wall_timer(1000ms, std::bind(&VIRTUAL_WALL::CALC_TF_Timer, this)); //1sec
 
@@ -137,6 +142,52 @@ public:
 
 	//Subscription ////////////////////////////////////////////////////////////////////////////////////
 	rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscriber;
+
+	//costmap clear ///////////////////////////////////////////////////////////////////////////////////
+	rclcpp::Client<nav2_msgs::srv::ClearEntireCostmap>::SharedPtr clear_global_costmap_client_;
+	rclcpp::Client<nav2_msgs::srv::ClearEntireCostmap>::SharedPtr clear_local_costmap_client_;
+	rclcpp::TimerBase::SharedPtr clear_costmap_timer_;
+
+	//가상벽 삭제 반영
+	//nav2 ObstacleLayer 는 한 번 마킹된 셀을 "포인트가 사라졌다"는 이유로 지우지 않음 (raytrace clearing 만 지움)
+	//-> 벽이 빠진 포인트클라우드를 발행한 뒤 costmap 을 초기화하면, 남은 벽(마지막 수신 포인트클라우드)과
+	//   라이다 장애물만 다음 업데이트에서 다시 마킹됨
+	void Schedule_Costmap_Clear()
+	{
+		if(clear_costmap_timer_) clear_costmap_timer_->cancel();
+		//costmap 이 새 포인트클라우드를 먼저 수신하도록 약간 지연 후 clear
+		clear_costmap_timer_ = this->create_wall_timer(500ms, [this]() {
+			clear_costmap_timer_->cancel();
+			auto req = std::make_shared<nav2_msgs::srv::ClearEntireCostmap::Request>();
+			if(clear_global_costmap_client_->service_is_ready())
+				clear_global_costmap_client_->async_send_request(req);
+			else
+				RCLCPP_WARN(this->get_logger(), "global costmap clear service not available");
+			if(clear_local_costmap_client_->service_is_ready())
+				clear_local_costmap_client_->async_send_request(req);
+			else
+				RCLCPP_WARN(this->get_logger(), "local costmap clear service not available");
+			RCLCPP_INFO(this->get_logger(), "Costmap cleared for virtual wall removal.");
+		});
+	}
+
+	//local 가상벽 포인트클라우드 즉시 발행 (1초 타이머를 기다리지 않음)
+	void Publish_Local_Virtual_Wall()
+	{
+		sensor_msgs::msg::PointCloud2 combined_cloud2;
+		for (const auto& [id, cloud2] : polygon_local_costmap)
+		{
+			mergePointClouds(combined_cloud2, cloud2);
+		}
+		if (polygon_local_costmap.empty())
+		{
+			combined_cloud2 = sensor_msgs::msg::PointCloud2();
+			combined_cloud2.header.frame_id = "map";
+			combined_cloud2.header.stamp = this->now();
+			ensurePointCloudFields(combined_cloud2);
+		}
+		local_virtual_obstacles_publisher->publish(combined_cloud2);
+	}
 
 
 	//Subscribe Callback Function ////////////////////////////////////////////////////////////////////////////////////
@@ -525,6 +576,12 @@ public:
 		{
 			global_virtual_obstacles_publisher->publish(combined_cloud);
 			_pVirtual_polygon.noEmpty = true;
+		}
+
+		if (request->remove)
+		{
+			Publish_Local_Virtual_Wall();
+			Schedule_Costmap_Clear();
 		}
 	}
 
